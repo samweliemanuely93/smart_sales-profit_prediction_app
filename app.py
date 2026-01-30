@@ -1,144 +1,60 @@
-# app.py
 import streamlit as st
 import pandas as pd
-import numpy as np
 from sklearn.linear_model import LinearRegression
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import mean_squared_error, r2_score
-import plotly.express as px
-from io import BytesIO
+import matplotlib.pyplot as plt
 
-# -------------------------------
-# App Config
-# -------------------------------
-st.set_page_config(page_title="Smart Sales Profit Prediction App", layout="wide")
-st.title("💰 Smart Sales Profit Prediction App")
+# App Title
+st.title("Smart Sales Profit Prediction App")
+st.markdown("""
+Predict future sales and profits using your sales data. Upload a CSV file with columns:
+`Date`, `Units_Sold`, `Price`, `Cost`.
+""")
 
-# -------------------------------
-# Currency Selection & Conversion
-# -------------------------------
-st.sidebar.header("Currency Conversion")
-currency_options = ["USD", "EUR", "KES", "GBP"]
-currency = st.sidebar.selectbox("Select Currency for Profit Display:", currency_options)
+# Sidebar: Upload CSV
+st.sidebar.header("Upload Sales Data")
+uploaded_file = st.sidebar.file_uploader("Upload your CSV file", type=["csv"])
 
-# Static demo rates
-currency_rates = {"USD": 1, "EUR": 0.92, "KES": 150, "GBP": 0.81}
-rate = currency_rates[currency]
+if uploaded_file:
+    # Read CSV
+    data = pd.read_csv(uploaded_file, parse_dates=["Date"])
+    st.subheader("Sales Data")
+    st.dataframe(data)
 
-# -------------------------------
-# Dataset Upload / Built-in Dataset
-# -------------------------------
-st.sidebar.header("Dataset")
-uploaded_file = st.sidebar.file_uploader("Upload CSV Dataset", type=["csv"])
+    # Prepare features and target
+    X = data.index.values.reshape(-1, 1)  # Using row index as a simple time feature
+    y = data["Units_Sold"]
 
-if uploaded_file is not None:
-    try:
-        data = pd.read_csv(uploaded_file)
-        st.success("✅ Dataset loaded successfully!")
-    except Exception as e:
-        st.error(f"Failed to load dataset: {e}")
-        st.stop()
-else:
-    st.info("Using built-in sample dataset")
-    np.random.seed(42)
-    data = pd.DataFrame({
-        "Units_Sold": np.random.randint(50, 500, 100),
-        "Marketing_Spend": np.random.randint(1000, 10000, 100),
-        "Price_per_Unit": np.random.randint(20, 100, 100),
-    })
-    data["Profit"] = data["Units_Sold"] * data["Price_per_Unit"] * 0.2 + data["Marketing_Spend"] * 0.1
-
-st.subheader("Sample Data")
-st.dataframe(data.head())
-
-# -------------------------------
-# Feature Selection & Model Training
-# -------------------------------
-st.header("📊 Linear Regression Model Training")
-features = st.multiselect(
-    "Select Features for Prediction:", options=list(data.columns.drop("Profit")), 
-    default=list(data.columns.drop("Profit"))
-)
-target = "Profit"
-
-if len(features) == 0:
-    st.warning("Select at least one feature to train the model.")
-    st.stop()
-
-X = data[features]
-y = data[target]
-
-try:
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    # Train Linear Regression model
     model = LinearRegression()
-    model.fit(X_train, y_train)
-    y_pred = model.predict(X_test)
+    model.fit(X, y)
 
-    st.subheader("Model Metrics")
-    st.write(f"R² Score: {r2_score(y_test, y_pred):.2f}")
-    st.write(f"Mean Squared Error: {mean_squared_error(y_test, y_pred):.2f}")
+    # Predict next 7 days
+    future_index = pd.DataFrame(range(len(data), len(data) + 7))
+    predicted_sales = model.predict(future_index)
 
-    # Feature importance
-    st.subheader("Feature Importance")
-    importance = pd.DataFrame({"Feature": features, "Coefficient": model.coef_})
-    st.dataframe(importance)
-    fig_importance = px.bar(importance, x="Feature", y="Coefficient", title="Feature Importance")
-    st.plotly_chart(fig_importance)
-except Exception as e:
-    st.error(f"Model training failed: {e}")
-    st.stop()
+    # Estimate profit
+    avg_price = data["Price"].mean()
+    avg_cost = data["Cost"].mean()
+    predicted_profit = (avg_price - avg_cost) * predicted_sales
 
-# -------------------------------
-# Predict Profit Section
-# -------------------------------
-st.header("💹 Predict Profit")
-input_data = {}
-for feature in features:
-    min_val = int(data[feature].min())
-    max_val = int(data[feature].max())
-    input_data[feature] = st.number_input(f"Enter {feature}:", min_value=min_val, max_value=max_val, value=min_val)
+    # Show predictions
+    st.subheader("Next 7 Days Sales Prediction")
+    prediction_df = pd.DataFrame({
+        "Day": range(1, 8),
+        "Predicted_Units_Sold": predicted_sales.astype(int),
+        "Estimated_Profit": predicted_profit.astype(int)
+    })
+    st.dataframe(prediction_df)
 
-if st.button("Predict Profit"):
-    try:
-        input_df = pd.DataFrame([input_data])
-        pred_profit = model.predict(input_df)[0] * rate
-        st.success(f"Predicted Profit in {currency}: {pred_profit:.2f}")
-    except Exception as e:
-        st.error(f"Prediction failed: {e}")
+    # Plot sales prediction
+    plt.figure(figsize=(10,5))
+    plt.plot(range(len(data)), y, label="Actual Sales")
+    plt.plot(range(len(data), len(data)+7), predicted_sales, label="Predicted Sales", linestyle="--", color="orange")
+    plt.xlabel("Days")
+    plt.ylabel("Units Sold")
+    plt.title("Sales Prediction")
+    plt.legend()
+    st.pyplot(plt)
 
-# -------------------------------
-# Trend Plot for Units Sold
-# -------------------------------
-st.header("📈 Units Sold Trend")
-try:
-    fig_trend = px.line(data, y="Units_Sold", title="Units Sold Trend", labels={"index": "Index", "Units_Sold": "Units Sold"})
-    st.plotly_chart(fig_trend)
-except Exception as e:
-    st.error(f"Failed to generate trend plot: {e}")
-
-# -------------------------------
-# Downloadable Prediction Report
-# -------------------------------
-st.header("📄 Download Prediction Report")
-if st.button("Generate Report"):
-    try:
-        report = data.copy()
-        report["Profit_in_Selected_Currency"] = report["Profit"] * rate
-        buffer = BytesIO()
-        report.to_csv(buffer, index=False)
-        buffer.seek(0)
-        st.download_button("Download CSV Report", buffer, file_name="prediction_report.csv", mime="text/csv")
-    except Exception as e:
-        st.error(f"Report generation failed: {e}")
-
-# -------------------------------
-# YouTube Advice / Info Links
-# -------------------------------
-st.header("🎓 YouTube Advice & Tips")
-youtube_links = {
-    "Linear Regression Basics": "https://www.youtube.com/watch?v=J_LnPL3Qg70",
-    "Feature Importance Explained": "https://www.youtube.com/watch?v=2BXuAGLIa0g",
-    "Profit Prediction Tutorials": "https://www.youtube.com/watch?v=ZkjP5RJLQF4",
-}
-for name, link in youtube_links.items():
-    st.markdown(f'<a href="{link}" target="_blank">{name}</a>', unsafe_allow_html=True)
+else:
+    st.info("Please upload a CSV file to see predictions.")
